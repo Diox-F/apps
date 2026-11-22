@@ -15,6 +15,13 @@ self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  if (url.origin === location.origin && /\/fotos\.bin$/.test(url.pathname)) {
+    e.respondWith(caches.open(CACHE).then(c => c.match(req).then(hit => {
+      const net = fetch(req).then(r => { if (r && r.ok) c.put(req, r.clone()); return r; }).catch(() => hit);
+      return hit || net;
+    })));
+    return;
+  }
   if (req.mode === "navigate" || url.origin === location.origin) {
     const key = req.mode === "navigate" ? "./" : req;
     e.respondWith(fetch(req).then(res => {
