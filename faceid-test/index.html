@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0b0f19">
+<title>Face-ID-Test</title>
+<style>
+:root{color-scheme:dark}
+html,body{margin:0;background:#0b0f19;color:#f2f4f8;font-family:Poppins,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:440px;margin:0 auto;padding:28px 16px 48px;box-sizing:border-box}
+h1{font-size:24px;margin:0 0 6px}
+.sub{color:#a9b1c3;font-size:14px;line-height:1.45;margin:0 0 20px}
+.karte{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:18px;margin-bottom:14px}
+.karte h2{font-size:16px;margin:0 0 6px}
+.karte p{margin:0 0 12px;color:#a9b1c3;font-size:14px;line-height:1.45}
+button{width:100%;font:inherit;font-weight:600;font-size:15px;padding:13px;border:0;border-radius:12px;background:linear-gradient(90deg,#2563eb,#22d3ee);color:#fff;cursor:pointer}
+button[disabled]{opacity:.45;cursor:default}
+.stat{font-size:14px;margin-top:10px;min-height:20px;line-height:1.45}
+.ok{color:#4ade80}.nein{color:#f87171}.info{color:#a9b1c3}
+#ergebnis{font-size:18px;font-weight:600;text-align:center;padding:18px;border-radius:16px;margin-bottom:14px;display:none}
+#ergebnis.ok{display:block;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.4)}
+#ergebnis.nein{display:block;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4)}
+pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:#a9b1c3;margin:0}
+</style>
+</head>
+<body>
+<main>
+<h1>Face-ID-Test</h1>
+<p class="sub">Prüft, ob dein Handy das Tresor-Passwort später mit Face ID entsperren kann. Es wird nichts an deinen Apps geändert.</p>
+
+<div id="ergebnis"></div>
+
+<div class="karte">
+  <h2>Schritt 1: Face ID einrichten</h2>
+  <p>Dein Handy legt einen Test-Passkey „Face-ID-Test“ an und fragt nach Face ID.</p>
+  <button id="b1">Face ID einrichten</button>
+  <div class="stat" id="s1"></div>
+</div>
+
+<div class="karte">
+  <h2>Schritt 2: Mit Face ID entsperren</h2>
+  <p>Entsperrt mit Face ID einen geheimen Testtext. Klappt das, klappt es auch für den Tresor.</p>
+  <button id="b2" disabled>Mit Face ID entsperren</button>
+  <div class="stat" id="s2"></div>
+</div>
+
+<div class="karte">
+  <h2>Technische Angaben</h2>
+  <p>Mach davon einen Screenshot, falls etwas nicht klappt.</p>
+  <pre id="tech"></pre>
+</div>
+</main>
+<script>
+(function () {
+  var LS = 'faceid-test:v1';
+  var SALZ = new TextEncoder().encode('finns-apps-faceid-test-v1');
+  var TEXT = 'Jalla Abfahrt! Der Testtext wurde mit Face ID entschlüsselt.';
+  var tech = [];
+  function $(id) { return document.getElementById(id); }
+  function log(s) { tech.push(s); $('tech').textContent = tech.join('\n'); }
+  function stat(id, cls, txt) { var e = $(id); e.className = 'stat ' + cls; e.textContent = txt; }
+  function ergebnis(ok, txt) { var e = $('ergebnis'); e.className = ok ? 'ok' : 'nein'; e.textContent = txt; }
+  function b64(buf) { var a = new Uint8Array(buf), s = ''; for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s); }
+  function unb64(s) { var b = atob(s), a = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+  function laden() { try { return JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e) { return null; } }
+  function speichern(o) { try { localStorage.setItem(LS, JSON.stringify(o)); } catch (e) {} }
+  function aesKey(prf) {
+    return crypto.subtle.importKey('raw', prf, 'HKDF', false, ['deriveKey']).then(function (k) {
+      return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: new TextEncoder().encode('tresor') }, k, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    });
+  }
+  function fehlerText(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError') return 'Abgebrochen oder nicht erlaubt (' + n + ').';
+    if (n === 'InvalidStateError') return 'Es gibt schon einen Passkey für diese Seite (' + n + ').';
+    if (n === 'NotSupportedError') return 'Wird von diesem Gerät nicht unterstützt (' + n + ').';
+    if (n === 'SecurityError') return 'Sicherheitsfehler (' + n + ').';
+    return (n || 'Fehler') + ': ' + (e && e.message || e);
+  }
+
+  log('Gerät: ' + navigator.userAgent);
+  log('Adresse: ' + location.hostname);
+  var hatWebAuthn = !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
+  log('Passkeys im Browser: ' + (hatWebAuthn ? 'ja' : 'nein'));
+  if (!hatWebAuthn) {
+    ergebnis(false, '❌ Dieser Browser kann keine Passkeys. Face ID geht hier nicht.');
+    $('b1').disabled = true;
+    return;
+  }
+  PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then(function (v) {
+    log('Face ID / Fingerabdruck verfügbar: ' + (v ? 'ja' : 'nein'));
+    if (!v) stat('s1', 'nein', 'Dein Handy meldet kein Face ID bzw. keinen Fingerabdruck. Ist eine Code-Sperre eingerichtet?');
+  }).catch(function (e) { log('Prüfung Face ID: ' + fehlerText(e)); });
+  if (PublicKeyCredential.getClientCapabilities) {
+    PublicKeyCredential.getClientCapabilities().then(function (c) { log('Fähigkeiten: prf=' + c['extension:prf'] + ', passkeyPlatform=' + c.passkeyPlatformAuthenticator); }).catch(function () {});
+  }
+
+  var st = laden();
+  if (st && st.id) { $('b2').disabled = false; stat('s1', 'ok', '✓ Schon eingerichtet. Du kannst direkt Schritt 2 machen.'); }
+
+  $('b1').addEventListener('click', function () {
+    stat('s1', 'info', 'Warte auf Face ID …');
+    var userId = crypto.getRandomValues(new Uint8Array(16));
+    navigator.credentials.create({ publicKey: {
+      rp: { name: 'Finns Apps', id: location.hostname },
+      user: { id: userId, name: 'Face-ID-Test', displayName: 'Face-ID-Test' },
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'required', userVerification: 'required' },
+      timeout: 120000,
+      extensions: { prf: {} }
+    } }).then(function (cred) {
+      var ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+      log('Einrichten: ok, PRF beim Anlegen: ' + JSON.stringify(ext.prf || null));
+      speichern({ id: b64(cred.rawId) });
+      $('b2').disabled = false;
+      if (ext.prf && ext.prf.enabled === false) {
+        stat('s1', 'nein', 'Passkey angelegt, aber dein Handy meldet: kein Entsperren von Geheimnissen (PRF).');
+        ergebnis(false, '❌ Face ID geht, aber dein Handy kann damit keine Passwörter entsperren.');
+      } else {
+        stat('s1', 'ok', '✓ Eingerichtet. Jetzt Schritt 2.');
+      }
+    }).catch(function (e) { stat('s1', 'nein', fehlerText(e)); log('Einrichten: ' + fehlerText(e)); });
+  });
+
+  $('b2').addEventListener('click', function () {
+    var s = laden(); if (!s || !s.id) return;
+    stat('s2', 'info', 'Warte auf Face ID …');
+    navigator.credentials.get({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rpId: location.hostname,
+      allowCredentials: [{ type: 'public-key', id: unb64(s.id) }],
+      userVerification: 'required',
+      timeout: 120000,
+      extensions: { prf: { eval: { first: SALZ } } }
+    } }).then(function (cred) {
+      var ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+      var first = ext.prf && ext.prf.results && ext.prf.results.first;
+      log('Entsperren: ok, PRF-Ergebnis: ' + (first ? (first.byteLength + ' Byte') : 'keins'));
+      if (!first) {
+        stat('s2', 'nein', 'Face ID hat geklappt, aber das Handy liefert keinen Schlüssel (PRF fehlt).');
+        ergebnis(false, '❌ Face ID geht, aber dein Handy kann damit keine Passwörter entsperren. Ein Update (iOS 18 oder neuer) könnte helfen.');
+        return;
+      }
+      return aesKey(first).then(function (key) {
+        var s2 = laden();
+        if (!s2.ct) {
+          var iv = crypto.getRandomValues(new Uint8Array(12));
+          return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, new TextEncoder().encode(TEXT)).then(function (ct) {
+            s2.iv = b64(iv); s2.ct = b64(ct); speichern(s2);
+            stat('s2', 'ok', '✓ Testtext mit Face ID verschlüsselt. Tippe den Knopf noch einmal zum Entschlüsseln.');
+            log('Testtext verschlüsselt');
+          });
+        }
+        return crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(s2.iv) }, key, unb64(s2.ct)).then(function (pt) {
+          var t = new TextDecoder().decode(pt);
+          stat('s2', 'ok', '✓ ' + t);
+          ergebnis(true, '✅ Dein Handy kann es! Face ID fürs Dashboard ist möglich.');
+          log('Testtext entschlüsselt: ok');
+        }, function () {
+          stat('s2', 'nein', 'Entschlüsseln fehlgeschlagen: Face ID lieferte einen anderen Schlüssel als beim ersten Mal.');
+          ergebnis(false, '❌ Der Schlüssel war nicht gleich. So geht es nicht zuverlässig.');
+          log('Testtext entschlüsseln: fehlgeschlagen');
+        });
+      });
+    }).catch(function (e) { stat('s2', 'nein', fehlerText(e)); log('Entsperren: ' + fehlerText(e)); });
+  });
+})();
+</script>
+</body>
+</html>
