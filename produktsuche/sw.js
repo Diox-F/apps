@@ -1,6 +1,8 @@
 /* Offline-Speicher der Produktsuche: Seite immer zuerst frisch aus dem Netz, ohne Netz aus dem Speicher */
-/* v2: Schriften liegen jetzt in schriften/ (eigene Adresse), der alte Speicher mit den Google-Schriften wird gelöscht */
-const CACHE = "produktsuche-v2";
+/* v2: Schriften liegen jetzt in schriften/ (eigene Adresse), der alte Speicher mit den Google-Schriften wird gelöscht
+   v3: Seite und App-Dateien immer beim Server nachfragen (cache: "no-cache"). GitHub Pages erlaubt sonst 10 Minuten
+       Zwischenspeicher (max-age=600), dann zeigte das iPad nach dem Hochladen noch bis zu 10 Minuten die alte Fassung. */
+const CACHE = "produktsuche-v3";
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.add("./")));
@@ -25,7 +27,11 @@ self.addEventListener("fetch", e => {
   }
   if (req.mode === "navigate" || url.origin === location.origin) {
     const key = req.mode === "navigate" ? "./" : req;
-    e.respondWith(fetch(req).then(res => {
+    /* Seitenaufruf: neu aufbauen, damit „no-cache“ gilt; Weiterleitungen (z. B. ohne Schrägstrich) gibt der Browser selbst weiter */
+    const frisch = req.mode === "navigate"
+      ? fetch(req.url, { cache: "no-cache", credentials: "same-origin", redirect: "manual" })
+      : fetch(req, { cache: "no-cache" });
+    e.respondWith(frisch.then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(key, copy)); }
       return res;
     }).catch(() => caches.match(key)));
