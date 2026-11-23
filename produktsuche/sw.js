@@ -1,5 +1,6 @@
 /* Offline-Speicher der Produktsuche: Seite immer zuerst frisch aus dem Netz, ohne Netz aus dem Speicher */
-const CACHE = "produktsuche-v1";
+/* v2: Schriften liegen jetzt in schriften/ (eigene Adresse), der alte Speicher mit den Google-Schriften wird gelöscht */
+const CACHE = "produktsuche-v2";
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.add("./")));
@@ -29,11 +30,5 @@ self.addEventListener("fetch", e => {
       return res;
     }).catch(() => caches.match(key)));
     return;
-  }
-  if (/^fonts\.(googleapis|gstatic)\.com$/.test(url.hostname)) {
-    e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
-      const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy));
-      return res;
-    })));
   }
 });
